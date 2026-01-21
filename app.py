@@ -26,13 +26,14 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. SETUP AI ENGINE ---
+# --- 2. SETUP AI ENGINE (DI-PERBAIKI AGAR TIDAK ERROR DI CLOUD) ---
 @st.cache_resource
 def load_pose_model():
     try:
         import mediapipe as mp
         return mp.solutions.pose, mp.solutions.drawing_utils, True
-    except: return None, None, False
+    except Exception as e:
+        return None, None, False
 
 POSE_SOL, DRAW_SOL, AI_READY = load_pose_model()
 
@@ -124,7 +125,7 @@ def create_pdf(atlet_info, metrics, fig_line, fig_radar):
 @st.dialog("✅ Analisis Berhasil")
 def show_success_dialog():
     st.write(f"Data analisis untuk **{st.session_state['nama_atlet']}** telah berhasil diproses.")
-    st.write("Silakan klik tombol di bawah untuk melihat laporan lengkap di menu analisis.")
+    st.write("Silakan klik tombol di bawah untuk melihat laporan lengkap.")
     if st.button("Klik untuk melihat analisis"):
         st.session_state['menu_pilihan'] = "📊 Laporan Analisis"
         st.rerun()
@@ -153,52 +154,56 @@ if st.session_state['menu_pilihan'] == "🏆 Papan Peringkat":
 
 elif st.session_state['menu_pilihan'] == "📂 Proses Video":
     st.markdown("## 🎥 Analisis Kinematik Video")
-    uploaded_file = st.file_uploader("Unggah Video", type=['mp4', 'mov'])
-    if uploaded_file and st.button("🚀 MULAI ANALISIS"):
-        if not in_nama: st.warning("⚠️ Isi nama atlet terlebih dahulu!")
-        else:
-            tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
-            tfile.write(uploaded_file.read())
-            cap = cv2.VideoCapture(tfile.name)
-            fps, width, height = int(cap.get(5)), int(cap.get(3)), int(cap.get(4))
-            
-            proc_path = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4').name
-            out_writer = cv2.VideoWriter(proc_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
-            
-            logs = []
-            stframe = st.empty()
-            with POSE_SOL.Pose(model_complexity=1) as pose:
-                curr = 0
-                while cap.isOpened():
-                    ret, frame = cap.read()
-                    if not ret: break
-                    res = pose.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-                    if res.pose_landmarks:
-                        DRAW_SOL.draw_landmarks(frame, res.pose_landmarks, POSE_SOL.POSE_CONNECTIONS)
-                        k_y = res.pose_landmarks.landmark[25].y
-                        speed = np.random.uniform(8, 10.5) if k_y < 0.55 else np.random.uniform(3, 5)
-                        logs.append({"Timestamp": curr, "Kecepatan": round(speed, 2), "Jarak": round(curr*0.12, 2), "Skor_Teknik": int(np.interp(k_y, [0.3, 0.7], [100, 0]))})
-                    out_writer.write(frame)
-                    if curr % 5 == 0: stframe.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), use_container_width=True)
-                    curr += 1
-            cap.release(); out_writer.release()
-            
-            df = pd.DataFrame(logs)
-            st.session_state.update({"df": df, "nama_atlet": in_nama, "processed_video_path": proc_path})
-            save_to_db(in_nama, in_umur, in_klub, df['Kecepatan'].max(), df['Jarak'].max(), df['Skor_Teknik'].mean())
-            show_success_dialog()
+    if not AI_READY:
+        st.error("❌ MediaPipe AI tidak termuat. Periksa file requirements.txt Anda.")
+    else:
+        uploaded_file = st.file_uploader("Unggah Video", type=['mp4', 'mov'])
+        if uploaded_file and st.button("🚀 MULAI ANALISIS"):
+            if not in_nama: st.warning("⚠️ Isi nama atlet terlebih dahulu!")
+            else:
+                tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
+                tfile.write(uploaded_file.read())
+                cap = cv2.VideoCapture(tfile.name)
+                fps = int(cap.get(cv2.CAP_PROP_FPS))
+                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                
+                proc_path = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4').name
+                out_writer = cv2.VideoWriter(proc_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
+                
+                logs = []
+                stframe = st.empty()
+                with POSE_SOL.Pose(static_image_mode=False, model_complexity=1) as pose:
+                    curr = 0
+                    while cap.isOpened():
+                        ret, frame = cap.read()
+                        if not ret: break
+                        res = pose.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                        if res.pose_landmarks:
+                            DRAW_SOL.draw_landmarks(frame, res.pose_landmarks, POSE_SOL.POSE_CONNECTIONS)
+                            k_y = res.pose_landmarks.landmark[25].y
+                            speed = np.random.uniform(8, 10.5) if k_y < 0.55 else np.random.uniform(3, 5)
+                            logs.append({"Timestamp": curr, "Kecepatan": round(speed, 2), "Jarak": round(curr*0.12, 2), "Skor_Teknik": int(np.interp(k_y, [0.3, 0.7], [100, 0]))})
+                        out_writer.write(frame)
+                        if curr % 10 == 0: stframe.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), use_container_width=True)
+                        curr += 1
+                cap.release(); out_writer.release()
+                
+                if logs:
+                    df = pd.DataFrame(logs)
+                    st.session_state.update({"df": df, "nama_atlet": in_nama, "processed_video_path": proc_path})
+                    save_to_db(in_nama, in_umur, in_klub, df['Kecepatan'].max(), df['Jarak'].max(), df['Skor_Teknik'].mean())
+                    show_success_dialog()
+                else:
+                    st.error("Gagal mendeteksi gerakan. Pastikan tubuh atlet terlihat jelas.")
 
 elif st.session_state['menu_pilihan'] == "📝 Arsip Data":
     st.markdown("## 📝 Impor Telemetri CSV")
-    csv_file = st.file_uploader("Unggah File CSV (Timestamp, Kecepatan, Jarak, Skor_Teknik)", type="csv")
+    csv_file = st.file_uploader("Unggah File CSV", type="csv")
     if csv_file and st.button("📥 PROSES CSV"):
         df_csv = pd.read_csv(csv_file)
-        
-        # --- PERBAIKAN: NORMALISASI NAMA KOLOM ---
-        # Menghapus spasi dan memastikan kapitalisasi sesuai (Capitalized)
         df_csv.columns = [c.strip().title().replace(" ", "_") for c in df_csv.columns]
-        # Penyesuaian khusus jika user menulis 'Skor_teknik' (t kecil) menjadi 'Skor_Teknik'
-        df_csv = df_csv.rename(columns={'Skor_teknik': 'Skor_Teknik', 'Timestamp': 'Timestamp', 'Kecepatan': 'Kecepatan', 'Jarak': 'Jarak'})
+        df_csv = df_csv.rename(columns={'Skor_teknik': 'Skor_Teknik'})
         
         try:
             st.session_state.update({"df": df_csv, "nama_atlet": in_nama})
