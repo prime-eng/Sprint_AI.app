@@ -1,8 +1,7 @@
 streamlit
+mediapipe
+opencv-python-headless
 pandas
 numpy
 plotly
-opencv-python-headless
-mediapipe
 fpdf
-kaleido
