@@ -26,16 +26,16 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. SETUP AI ENGINE (DI-PERBAIKI AGAR TIDAK ERROR DI CLOUD) ---
-@st.cache_resource
-def load_pose_model():
+# --- 2. SETUP AI ENGINE (UPDATED FOR STABILITY) ---
+def get_ai_engine():
     try:
         import mediapipe as mp
         return mp.solutions.pose, mp.solutions.drawing_utils, True
     except Exception as e:
+        st.sidebar.error(f"AI Engine Error: {e}")
         return None, None, False
 
-POSE_SOL, DRAW_SOL, AI_READY = load_pose_model()
+POSE_SOL, DRAW_SOL, AI_READY = get_ai_engine()
 
 # --- 3. SETUP DATABASE ---
 DB_NAME = 'sprint_liquid.db'
@@ -155,7 +155,7 @@ if st.session_state['menu_pilihan'] == "🏆 Papan Peringkat":
 elif st.session_state['menu_pilihan'] == "📂 Proses Video":
     st.markdown("## 🎥 Analisis Kinematik Video")
     if not AI_READY:
-        st.error("❌ MediaPipe AI tidak termuat. Periksa file requirements.txt Anda.")
+        st.error("❌ MediaPipe AI tidak termuat. Hubungi Administrator atau cek logs.")
     else:
         uploaded_file = st.file_uploader("Unggah Video", type=['mp4', 'mov'])
         if uploaded_file and st.button("🚀 MULAI ANALISIS"):
@@ -164,7 +164,7 @@ elif st.session_state['menu_pilihan'] == "📂 Proses Video":
                 tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
                 tfile.write(uploaded_file.read())
                 cap = cv2.VideoCapture(tfile.name)
-                fps = int(cap.get(cv2.CAP_PROP_FPS))
+                fps = int(cap.get(cv2.CAP_PROP_FPS)) if cap.get(cv2.CAP_PROP_FPS) > 0 else 30
                 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
                 
@@ -173,20 +173,33 @@ elif st.session_state['menu_pilihan'] == "📂 Proses Video":
                 
                 logs = []
                 stframe = st.empty()
-                with POSE_SOL.Pose(static_image_mode=False, model_complexity=1) as pose:
+                
+                # Gunakan model_complexity=0 untuk stabilitas di cloud
+                with POSE_SOL.Pose(static_image_mode=False, model_complexity=0, min_detection_confidence=0.5) as pose:
                     curr = 0
                     while cap.isOpened():
                         ret, frame = cap.read()
                         if not ret: break
-                        res = pose.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                        
+                        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        res = pose.process(rgb_frame)
+                        
                         if res.pose_landmarks:
                             DRAW_SOL.draw_landmarks(frame, res.pose_landmarks, POSE_SOL.POSE_CONNECTIONS)
                             k_y = res.pose_landmarks.landmark[25].y
                             speed = np.random.uniform(8, 10.5) if k_y < 0.55 else np.random.uniform(3, 5)
-                            logs.append({"Timestamp": curr, "Kecepatan": round(speed, 2), "Jarak": round(curr*0.12, 2), "Skor_Teknik": int(np.interp(k_y, [0.3, 0.7], [100, 0]))})
+                            logs.append({
+                                "Timestamp": curr, 
+                                "Kecepatan": round(speed, 2), 
+                                "Jarak": round(curr*0.12, 2), 
+                                "Skor_Teknik": int(np.interp(k_y, [0.3, 0.7], [100, 0]))
+                            })
+                            
                         out_writer.write(frame)
-                        if curr % 10 == 0: stframe.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), use_container_width=True)
+                        if curr % 15 == 0: 
+                            stframe.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), use_container_width=True)
                         curr += 1
+                        
                 cap.release(); out_writer.release()
                 
                 if logs:
@@ -195,7 +208,7 @@ elif st.session_state['menu_pilihan'] == "📂 Proses Video":
                     save_to_db(in_nama, in_umur, in_klub, df['Kecepatan'].max(), df['Jarak'].max(), df['Skor_Teknik'].mean())
                     show_success_dialog()
                 else:
-                    st.error("Gagal mendeteksi gerakan. Pastikan tubuh atlet terlihat jelas.")
+                    st.error("Gagal mendeteksi gerakan tubuh. Pastikan seluruh badan atlet terlihat di kamera.")
 
 elif st.session_state['menu_pilihan'] == "📝 Arsip Data":
     st.markdown("## 📝 Impor Telemetri CSV")
