@@ -5,3 +5,4 @@ plotly
 opencv-python-headless
 mediapipe
 fpdf
+kaleido
